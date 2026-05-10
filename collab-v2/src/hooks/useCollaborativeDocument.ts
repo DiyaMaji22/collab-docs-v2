@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useMemo, useRef } from "react";
+import { useCallback, useEffect, useReducer, useMemo, useRef, useState } from "react";
 import type {
   ChangeProposal,
   DocumentState,
@@ -9,7 +9,8 @@ import type {
 import type { DocumentId } from "../utils/documentSession";
 import { createActivityEntry, appendToLog } from "../utils/activityLog";
 import { countWords } from "../utils/text";
-import { ADMIN_WRITER, buildWriterForUser, isUserAdmin } from "../utils/session";
+import { ADMIN_WRITER, buildWriterForUser, getDocumentMetadata, isUserAdmin } from "../utils/session";
+import { loadDocumentRecord, saveDocumentRecord } from "../utils/api";
 import type { SessionUser } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ function loadState(docId: DocumentId): DocumentState {
 
 type Action =
   | { type: "SYNC_FROM_STORAGE"; payload: DocumentState }
+  | { type: "INITIALIZE_DOCUMENT"; writerId: string; title: string }
   | { type: "SET_PRESENCE"; writerId: string; patch: Partial<WriterPresence> }
   | { type: "UPDATE_DRAFT"; writerId: string; field: "title" | "body"; value: string }
   | { type: "SAVE_DOCUMENT"; writerId: string; draft: WriterDraft }
@@ -73,6 +75,17 @@ function reducer(state: DocumentState, action: Action): DocumentState {
 
     case "SYNC_FROM_STORAGE":
       return { ...action.payload, viewers: state.viewers };
+
+    case "INITIALIZE_DOCUMENT": {
+      const draft = { title: action.title, body: "" };
+      const entry = createActivityEntry(ADMIN_WRITER, "created the document", action.title);
+      return {
+        ...state,
+        document: draft,
+        drafts: { ...state.drafts, [action.writerId]: draft },
+        activityLog: appendToLog(state.activityLog, entry),
+      };
+    }
 
     case "SET_PRESENCE":
       return {
@@ -178,6 +191,7 @@ function reducer(state: DocumentState, action: Action): DocumentState {
 export function useCollaborativeDocument(documentId: DocumentId, currentUser: SessionUser) {
   const [state, dispatch] = useReducer(reducer, undefined, () => loadState(documentId));
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [backendReady, setBackendReady] = useState(false);
 
   // Check if user is admin based on metadata
   const isAdminByMetadata = useMemo(() => isUserAdmin(documentId, currentUser.sessionId), [documentId, currentUser.sessionId]);
@@ -185,11 +199,57 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   const canEdit = currentUser.permission === "edit" || isAdmin;
   const writer = useMemo(() => buildWriterForUser(currentUser), [currentUser]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setBackendReady(false);
+
+    loadDocumentRecord(documentId)
+      .then((record) => {
+        if (cancelled) return;
+        if (record?.state) {
+          dispatch({ type: "SYNC_FROM_STORAGE", payload: record.state });
+        }
+      })
+      .catch((error) => {
+        console.warn("MongoDB document load failed; using browser cache.", error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBackendReady(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId]);
+
   // Persist to localStorage (skip viewers — ephemeral)
   useEffect(() => {
     const { viewers: _v, ...persistable } = state;
-    localStorage.setItem(storageKey(documentId), JSON.stringify(persistable));
+    try {
+      localStorage.setItem(storageKey(documentId), JSON.stringify(persistable));
+    } catch (error) {
+      console.warn("Browser cache save failed; MongoDB save will still be attempted.", error);
+    }
   }, [documentId, state]);
+
+  useEffect(() => {
+    if (!backendReady) return;
+
+    const timeout = setTimeout(() => {
+      const { viewers: _v, ...persistable } = state;
+      saveDocumentRecord(
+        documentId,
+        { ...persistable, viewers: [] },
+        getDocumentMetadata(documentId)
+      ).catch((error) => {
+        console.warn("MongoDB document save failed; kept browser cache.", error);
+      });
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [backendReady, documentId, state]);
 
   // Cross-tab sync via storage events
   useEffect(() => {
@@ -227,6 +287,11 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
+  const initializeDocument = useCallback((title: string) => {
+    dispatch({ type: "INITIALIZE_DOCUMENT", writerId: currentUser.sessionId, title });
+    dispatch({ type: "SET_PRESENCE", writerId: currentUser.sessionId, patch: { isTyping: false, activity: "Created document" } });
+  }, [currentUser.sessionId]);
+
   const updateDraft = useCallback((field: "title" | "body", value: string) => {
     if (!canEdit) return;
     dispatch({ type: "UPDATE_DRAFT", writerId: currentUser.sessionId, field, value });
@@ -253,6 +318,20 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     if (isAdmin) {
       dispatch({ type: "SAVE_DOCUMENT", writerId: currentUser.sessionId, draft });
       dispatch({ type: "SET_PRESENCE", writerId: currentUser.sessionId, patch: { isTyping: false, activity: "Saved" } });
+      const entry = createActivityEntry(ADMIN_WRITER, "saved the document", draft.title);
+      saveDocumentRecord(
+        documentId,
+        {
+          ...state,
+          document: { ...draft },
+          drafts: { ...state.drafts, [currentUser.sessionId]: { ...draft } },
+          viewers: [],
+          activityLog: appendToLog(state.activityLog, entry),
+        },
+        getDocumentMetadata(documentId)
+      ).catch((error) => {
+        console.warn("MongoDB document save failed; kept browser cache.", error);
+      });
     } else if (canEdit) {
       dispatch({
         type: "SUBMIT_PROPOSAL",
@@ -265,7 +344,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
       });
       dispatch({ type: "SET_PRESENCE", writerId: currentUser.sessionId, patch: { isTyping: false, activity: "Submitted for review" } });
     }
-  }, [state.drafts, state.document, currentUser.sessionId, isAdmin, canEdit, writer]);
+  }, [documentId, state, currentUser.sessionId, isAdmin, canEdit, writer]);
 
   const acceptProposal = useCallback((proposalId: string) => {
     if (!isAdmin) return;
@@ -283,7 +362,6 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   const resolvedTitle = state.document.title.trim();
   const wordStats = useMemo(() => ({
     total: countWords(state.document.body),
-    chars: state.document.body.length,
   }), [state.document]);
 
   const pendingProposals = useMemo(() =>
@@ -301,6 +379,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     canEdit,
     pendingProposals,
     viewerCount,
+    initializeDocument,
     updateDraft,
     saveDraft,
     acceptProposal,

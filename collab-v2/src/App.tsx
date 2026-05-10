@@ -23,11 +23,31 @@ const App: React.FC = () => {
 
   const shareLinks = React.useMemo(() => buildShareLinks(documentId), [documentId]);
 
-  const handleCreateDocument = (creatorName: string, _documentTitle: string) => {
+  const {
+    state,
+    currentDraft,
+    resolvedTitle,
+    wordStats,
+    writer,
+    isAdmin,
+    canEdit,
+    pendingProposals,
+    viewerCount,
+    initializeDocument,
+    updateDraft,
+    saveDraft,
+    acceptProposal,
+    rejectProposal,
+    setFocusActivity,
+    clearFocusActivity,
+  } = useCollaborativeDocument(documentId, currentUser);
+
+  const handleCreateDocument = (creatorName: string, documentTitle: string) => {
     // Create metadata with the current user as creator/admin
     const sessionId = getOrCreateSessionId();
     const metadata = createDocumentMetadata(documentId, sessionId, creatorName);
     saveDocumentMetadata(metadata);
+    initializeDocument(documentTitle);
 
     // Update session with the creator name
     const updatedUser = {
@@ -43,24 +63,6 @@ const App: React.FC = () => {
   if (!documentExists) {
     return <LandingPage onCreateDocument={handleCreateDocument} />;
   }
-
-  const {
-    state,
-    currentDraft,
-    resolvedTitle,
-    wordStats,
-    writer,
-    isAdmin,
-    canEdit,
-    pendingProposals,
-    viewerCount,
-    updateDraft,
-    saveDraft,
-    acceptProposal,
-    rejectProposal,
-    setFocusActivity,
-    clearFocusActivity,
-  } = useCollaborativeDocument(documentId, currentUser);
 
   return (
     <>

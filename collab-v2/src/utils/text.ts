@@ -7,12 +7,16 @@ export function escapeHtml(text: string): string {
 }
 
 export function countWords(text: string): number {
-  const trimmed = text.trim();
+  const trimmed = text.replace(/<[^>]*>/g, " ").trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
 }
 
 function sanitizeStyleValue(value: string): string {
   return value.replace(/[^#(),.%\w\s-]/g, "");
+}
+
+function isAllowedImageSource(value: string): boolean {
+  return /^https?:\/\//.test(value) || /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value);
 }
 
 function formatInline(text: string): string {
@@ -58,20 +62,6 @@ function formatLine(line: string): string {
     return `<h1>${formatInline(line.replace(/^#\s+/, ""))}</h1>`;
   }
 
-  if (/^\s*[-*]\s+/.test(line)) {
-    const indent = line.match(/^ */)?.[0].length ?? 0;
-    return `<div class="doc-list-line" style="margin-left:${indent * 8}px">• ${formatInline(
-      line.replace(/^\s*[-*]\s+/, "")
-    )}</div>`;
-  }
-
-  if (/^\s*\d+\.\s+/.test(line)) {
-    const indent = line.match(/^ */)?.[0].length ?? 0;
-    return `<div class="doc-list-line" style="margin-left:${indent * 8}px">${formatInline(
-      line.trim()
-    )}</div>`;
-  }
-
   if (!line.trim()) {
     return "<br>";
   }
@@ -79,7 +69,110 @@ function formatLine(line: string): string {
   return `<p>${formatInline(line)}</p>`;
 }
 
+function hasHtml(text: string): boolean {
+  return /<\/?[a-z][\s\S]*>/i.test(text);
+}
+
+function sanitizeRichHtml(html: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const allowedTags = new Set([
+    "A",
+    "B",
+    "BR",
+    "DIV",
+    "EM",
+    "H1",
+    "H2",
+    "H3",
+    "I",
+    "IMG",
+    "LI",
+    "OL",
+    "P",
+    "SPAN",
+    "STRONG",
+    "U",
+    "UL",
+  ]);
+
+  const cleanNode = (node: Node): Node | null => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return document.createTextNode(node.textContent ?? "");
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+
+    const element = node as HTMLElement;
+    if (!allowedTags.has(element.tagName)) {
+      const fragment = document.createDocumentFragment();
+      element.childNodes.forEach((child) => {
+        const cleaned = cleanNode(child);
+        if (cleaned) fragment.appendChild(cleaned);
+      });
+      return fragment;
+    }
+
+    if (element.tagName === "UL" || element.tagName === "OL") {
+      const fragment = document.createDocumentFragment();
+      element.childNodes.forEach((child) => {
+        const cleaned = cleanNode(child);
+        if (cleaned) fragment.appendChild(cleaned);
+      });
+      return fragment;
+    }
+
+    if (element.tagName === "LI" && !element.textContent?.trim() && !element.querySelector("img")) {
+      return null;
+    }
+
+    const clone = document.createElement(element.tagName === "LI" ? "div" : element.tagName.toLowerCase());
+    if (element.tagName === "A") {
+      const href = element.getAttribute("href") ?? "";
+      if (/^https?:\/\//.test(href)) {
+        clone.setAttribute("href", href);
+        clone.setAttribute("target", "_blank");
+        clone.setAttribute("rel", "noreferrer");
+      }
+    }
+    if (element.tagName === "IMG") {
+      const src = element.getAttribute("src") ?? "";
+      if (isAllowedImageSource(src)) {
+        clone.setAttribute("src", src);
+        clone.setAttribute("alt", element.getAttribute("alt") ?? "");
+        clone.className = "doc-image";
+      }
+    }
+    if (element.style.textAlign) {
+      clone.style.textAlign = sanitizeStyleValue(element.style.textAlign);
+    }
+
+    element.childNodes.forEach((child) => {
+      const cleaned = cleanNode(child);
+      if (cleaned) clone.appendChild(cleaned);
+    });
+
+    return clone;
+  };
+
+  const cleaned = document.createDocumentFragment();
+  template.content.childNodes.forEach((child) => {
+    const node = cleanNode(child);
+    if (node) cleaned.appendChild(node);
+  });
+
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(cleaned);
+  return wrapper.innerHTML;
+}
+
 export function formatBodyText(text: string): string {
+  if (hasHtml(text)) {
+    return sanitizeRichHtml(text);
+  }
+
   return text.split("\n").map(formatLine).join("");
 }
 

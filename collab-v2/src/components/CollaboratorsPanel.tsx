@@ -91,7 +91,6 @@ export const CollaboratorsPanel: React.FC<CollaboratorsPanelProps> = React.memo(
         <div className="panel-label">Document stats</div>
         <div className="stats-grid">
           <StatCard value={wordStats.total} label="Words" />
-          <StatCard value={wordStats.chars} label="Chars" />
         </div>
       </div>
     </div>

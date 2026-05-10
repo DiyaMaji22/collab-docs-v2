@@ -87,7 +87,6 @@ export interface DocumentState {
 
 export interface WordStats {
   total: number;
-  chars: number;
 }
 
 export interface ShareConfig {

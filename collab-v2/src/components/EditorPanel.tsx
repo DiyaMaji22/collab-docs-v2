@@ -1,6 +1,7 @@
 import React from "react";
 import { Toolbar } from "./Toolbar";
 import type { Writer, WriterDraft, WriterPresence } from "../types";
+import { formatBodyText } from "../utils/text";
 
 interface EditorPanelProps {
   writer: Writer;
@@ -12,6 +13,40 @@ interface EditorPanelProps {
   onSave: () => void;
   onFocus: (field: "title" | "body") => void;
   onBlur: () => void;
+}
+
+const IMAGE_BOX_WIDTH = 420;
+const IMAGE_BOX_HEIGHT = 260;
+
+function resizeImageDataUrl(src: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = IMAGE_BOX_WIDTH;
+      canvas.height = IMAGE_BOX_HEIGHT;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Could not resize pasted image"));
+        return;
+      }
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      const x = (canvas.width - width) / 2;
+      const y = (canvas.height - height) / 2;
+
+      ctx.drawImage(image, x, y, width, height);
+      resolve(canvas.toDataURL("image/jpeg", 0.84));
+    };
+    image.onerror = () => reject(new Error("Could not load pasted image"));
+    image.src = src;
+  });
 }
 
 export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
@@ -26,6 +61,71 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
   onBlur,
 }) => {
   const bodyId = `editor-body-${writer.id}`;
+  const bodyRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || document.activeElement === el) return;
+    const nextHtml = formatBodyText(draft.body);
+    if (el.innerHTML !== nextHtml) {
+      el.innerHTML = nextHtml;
+    }
+  }, [draft.body]);
+
+  const syncBody = React.useCallback(() => {
+    const el = bodyRef.current;
+    if (el) onUpdate("body", el.innerHTML);
+  }, [onUpdate]);
+
+  const insertImage = React.useCallback((src: string) => {
+    const el = bodyRef.current;
+    if (!el) return;
+
+    el.focus();
+    const img = document.createElement("img");
+    img.className = "doc-image";
+    img.src = src;
+    img.alt = "Pasted image";
+
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(img);
+      range.setStartAfter(img);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else {
+      el.appendChild(img);
+    }
+
+    el.appendChild(document.createElement("br"));
+    syncBody();
+  }, [syncBody]);
+
+  const handlePaste = React.useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.type.startsWith("image/")
+    );
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    event.preventDefault();
+    const reader = new FileReader();
+    reader.onload = async () => {
+      if (typeof reader.result === "string") {
+        try {
+          insertImage(await resizeImageDataUrl(reader.result));
+        } catch {
+          insertImage(reader.result);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  }, [insertImage]);
 
   return (
     <div className="editor-panel">
@@ -66,14 +166,17 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
           onTextChange={(val) => onUpdate("body", val)}
         />
         <div className="ep-label">Body</div>
-        <textarea
+        <div
           id={bodyId}
-          className="ep-input"
-          value={draft.body}
-          placeholder={isAdmin ? "Write your document here…" : "Write your contribution here…"}
-          onChange={(e) => onUpdate("body", e.target.value)}
+          ref={bodyRef}
+          className="ep-input rich-editor"
+          contentEditable
+          data-placeholder={isAdmin ? "Write your document here..." : "Write your contribution here..."}
+          onInput={syncBody}
+          onPaste={handlePaste}
           onFocus={() => onFocus("body")}
           onBlur={onBlur}
+          suppressContentEditableWarning
           style={{ "--focus-color": writer.color } as React.CSSProperties}
         />
       </div>
