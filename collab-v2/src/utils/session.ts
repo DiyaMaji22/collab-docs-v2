@@ -1,4 +1,4 @@
-import type { Permission, SessionUser, Writer, DocumentMetadata } from "../types";
+import type { Permission, SessionUser, Writer, DocumentMetadata, AdminMember } from "../types";
 import type { DocumentId } from "./documentSession";
 
 // ─── URL param keys ───────────────────────────────────────────────────────────
@@ -152,20 +152,43 @@ export function createDocumentMetadata(
     creatorName,
     createdAt: new Date().toISOString(),
     admins: [creatorId], // Creator is the first admin
+    adminMembers: [{
+      sessionId: creatorId,
+      name: creatorName,
+      joinedAt: new Date().toISOString(),
+      isCreator: true,
+    }],
   };
+}
+
+export function normalizeDocumentMetadata(metadata: DocumentMetadata): DocumentMetadata {
+  const existingMembers = metadata.adminMembers ?? [];
+  const memberById = new Map(existingMembers.map((member) => [member.sessionId, member]));
+  const adminMembers: AdminMember[] = metadata.admins.map((sessionId) => {
+    const member = memberById.get(sessionId);
+    if (member) return member;
+    return {
+      sessionId,
+      name: sessionId === metadata.creatorId ? metadata.creatorName : "Admin",
+      joinedAt: metadata.createdAt,
+      isCreator: sessionId === metadata.creatorId,
+    };
+  });
+
+  return { ...metadata, adminMembers };
 }
 
 export function getDocumentMetadata(docId: DocumentId): DocumentMetadata | null {
   try {
     const stored = localStorage.getItem(METADATA_KEY(docId));
-    return stored ? JSON.parse(stored) : null;
+    return stored ? normalizeDocumentMetadata(JSON.parse(stored)) : null;
   } catch {
     return null;
   }
 }
 
 export function saveDocumentMetadata(metadata: DocumentMetadata): void {
-  localStorage.setItem(METADATA_KEY(metadata.documentId), JSON.stringify(metadata));
+  localStorage.setItem(METADATA_KEY(metadata.documentId), JSON.stringify(normalizeDocumentMetadata(metadata)));
 }
 
 export function isUserAdmin(docId: DocumentId, sessionId: string): boolean {
@@ -173,12 +196,25 @@ export function isUserAdmin(docId: DocumentId, sessionId: string): boolean {
   return metadata ? metadata.admins.includes(sessionId) : false;
 }
 
-export function grantAdminAccess(docId: DocumentId, sessionId: string): boolean {
+export function grantAdminAccess(docId: DocumentId, sessionId: string, name = "Admin"): DocumentMetadata | null {
   const metadata = getDocumentMetadata(docId);
-  if (!metadata || metadata.admins.includes(sessionId)) return false;
-  metadata.admins.push(sessionId);
-  saveDocumentMetadata(metadata);
-  return true;
+  if (!metadata) return null;
+  const normalized = normalizeDocumentMetadata(metadata);
+  let changed = false;
+  if (!normalized.admins.includes(sessionId)) {
+    normalized.admins.push(sessionId);
+    changed = true;
+  }
+  if (!normalized.adminMembers?.some((member) => member.sessionId === sessionId)) {
+    normalized.adminMembers = [
+      ...(normalized.adminMembers ?? []),
+      { sessionId, name, joinedAt: new Date().toISOString() },
+    ];
+    changed = true;
+  }
+  if (!changed) return null;
+  saveDocumentMetadata(normalized);
+  return normalized;
 }
 
 export function revokeAdminAccess(docId: DocumentId, sessionId: string): boolean {

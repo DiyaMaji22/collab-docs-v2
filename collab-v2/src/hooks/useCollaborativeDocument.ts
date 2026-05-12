@@ -5,11 +5,12 @@ import type {
   ViewerPresence,
   WriterDraft,
   WriterPresence,
+  DocumentMetadata,
 } from "../types";
 import type { DocumentId } from "../utils/documentSession";
 import { createActivityEntry, appendToLog } from "../utils/activityLog";
 import { countWords } from "../utils/text";
-import { ADMIN_WRITER, buildWriterForUser, getDocumentMetadata, isUserAdmin } from "../utils/session";
+import { ADMIN_WRITER, buildWriterForUser, getDocumentMetadata, grantAdminAccess, isUserAdmin, normalizeDocumentMetadata, saveDocumentMetadata } from "../utils/session";
 import { loadDocumentRecord, saveDocumentRecord } from "../utils/api";
 import type { SessionUser } from "../types";
 
@@ -105,7 +106,7 @@ function reducer(state: DocumentState, action: Action): DocumentState {
         drafts: {
           ...state.drafts,
           [action.writerId]: {
-            ...(state.drafts[action.writerId] ?? emptyDraft()),
+            ...(state.drafts[action.writerId] ?? state.document),
             [action.field]: action.value,
           },
         },
@@ -192,9 +193,14 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   const [state, dispatch] = useReducer(reducer, undefined, () => loadState(documentId));
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [backendReady, setBackendReady] = useState(false);
+  const [metadata, setMetadata] = useState<DocumentMetadata | null>(() => getDocumentMetadata(documentId));
 
   // Check if user is admin based on metadata
-  const isAdminByMetadata = useMemo(() => isUserAdmin(documentId, currentUser.sessionId), [documentId, currentUser.sessionId]);
+  const isAdminByMetadata = useMemo(() => {
+    return metadata
+      ? metadata.admins.includes(currentUser.sessionId)
+      : isUserAdmin(documentId, currentUser.sessionId);
+  }, [documentId, metadata, currentUser.sessionId]);
   const isAdmin = isAdminByMetadata || currentUser.permission === "admin";
   const canEdit = currentUser.permission === "edit" || isAdmin;
   const writer = useMemo(() => buildWriterForUser(currentUser), [currentUser]);
@@ -208,6 +214,11 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
         if (cancelled) return;
         if (record?.state) {
           dispatch({ type: "SYNC_FROM_STORAGE", payload: record.state });
+        }
+        if (record?.metadata) {
+          const normalized = normalizeDocumentMetadata(record.metadata);
+          saveDocumentMetadata(normalized);
+          setMetadata(normalized);
         }
       })
       .catch((error) => {
@@ -242,14 +253,14 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
       saveDocumentRecord(
         documentId,
         { ...persistable, viewers: [] },
-        getDocumentMetadata(documentId)
+        metadata ?? getDocumentMetadata(documentId)
       ).catch((error) => {
         console.warn("MongoDB document save failed; kept browser cache.", error);
       });
     }, 500);
 
     return () => clearTimeout(timeout);
-  }, [backendReady, documentId, state]);
+  }, [backendReady, documentId, metadata, state]);
 
   // Cross-tab sync via storage events
   useEffect(() => {
@@ -358,6 +369,12 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
+  useEffect(() => {
+    if (currentUser.permission !== "admin") return;
+    const nextMetadata = grantAdminAccess(documentId, currentUser.sessionId, currentUser.name);
+    if (nextMetadata) setMetadata(nextMetadata);
+  }, [documentId, metadata, currentUser.permission, currentUser.sessionId, currentUser.name]);
+
   const currentDraft = state.drafts[currentUser.sessionId] ?? { ...state.document };
   const resolvedTitle = state.document.title.trim();
   const wordStats = useMemo(() => ({
@@ -379,6 +396,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     canEdit,
     pendingProposals,
     viewerCount,
+    metadata,
     initializeDocument,
     updateDraft,
     saveDraft,

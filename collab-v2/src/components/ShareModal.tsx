@@ -17,6 +17,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   metadata,
 }) => {
   const [copyState, setCopyState] = React.useState<CopyState>({});
+  const admins = metadata?.adminMembers ?? [];
 
   const copy = async (key: string, url: string) => {
     try {
@@ -110,6 +111,17 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               <p className="admin-info-text">
                 Current admins: <strong>{metadata.admins.length}</strong>
               </p>
+              {admins.length > 0 && (
+                <div className="admin-member-list">
+                  {admins.map((admin) => (
+                    <div className="admin-member-row" key={admin.sessionId}>
+                      <span className="admin-member-avatar">{admin.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="admin-member-name">{admin.name}</span>
+                      {admin.isCreator && <span className="admin-member-badge">Creator</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="admin-info-note">
                 Tip: Share the Admin link above with people you want to make admin. They'll join as admins automatically.
               </p>

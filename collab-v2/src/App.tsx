@@ -33,6 +33,7 @@ const App: React.FC = () => {
     canEdit,
     pendingProposals,
     viewerCount,
+    metadata,
     initializeDocument,
     updateDraft,
     saveDraft,
@@ -135,7 +136,7 @@ const App: React.FC = () => {
           shareLinks={shareLinks}
           onClose={() => setShareOpen(false)}
           isAdmin={isAdmin}
-          metadata={getDocumentMetadata(documentId)}
+          metadata={metadata}
         />
       )}
     </>

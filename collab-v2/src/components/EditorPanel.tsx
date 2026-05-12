@@ -2,6 +2,7 @@ import React from "react";
 import { Toolbar } from "./Toolbar";
 import type { Writer, WriterDraft, WriterPresence } from "../types";
 import { formatBodyText } from "../utils/text";
+import { addToCustomDictionary, getSpellingSuggestions, getWordAtPoint } from "../utils/spellcheck";
 
 interface EditorPanelProps {
   writer: Writer;
@@ -17,6 +18,14 @@ interface EditorPanelProps {
 
 const IMAGE_BOX_WIDTH = 420;
 const IMAGE_BOX_HEIGHT = 260;
+
+type SpellMenuState = {
+  x: number;
+  y: number;
+  word: string;
+  suggestions: string[];
+  range: Range;
+} | null;
 
 function resizeImageDataUrl(src: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -62,6 +71,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
 }) => {
   const bodyId = `editor-body-${writer.id}`;
   const bodyRef = React.useRef<HTMLDivElement | null>(null);
+  const [spellMenu, setSpellMenu] = React.useState<SpellMenuState>(null);
 
   React.useEffect(() => {
     const el = bodyRef.current;
@@ -76,6 +86,48 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
     const el = bodyRef.current;
     if (el) onUpdate("body", el.innerHTML);
   }, [onUpdate]);
+
+  const closeSpellMenu = React.useCallback(() => setSpellMenu(null), []);
+
+  React.useEffect(() => {
+    if (!spellMenu) return;
+    window.addEventListener("click", closeSpellMenu);
+    window.addEventListener("scroll", closeSpellMenu, true);
+    return () => {
+      window.removeEventListener("click", closeSpellMenu);
+      window.removeEventListener("scroll", closeSpellMenu, true);
+    };
+  }, [closeSpellMenu, spellMenu]);
+
+  const replaceRange = React.useCallback((range: Range, value: string) => {
+    range.deleteContents();
+    range.insertNode(document.createTextNode(value));
+    syncBody();
+    closeSpellMenu();
+  }, [closeSpellMenu, syncBody]);
+
+  const handleContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const wordAtPoint = getWordAtPoint(event.clientX, event.clientY);
+    if (!wordAtPoint) {
+      closeSpellMenu();
+      return;
+    }
+
+    const suggestions = getSpellingSuggestions(wordAtPoint.word);
+    if (suggestions.length === 0) {
+      closeSpellMenu();
+      return;
+    }
+
+    event.preventDefault();
+    setSpellMenu({
+      x: event.clientX,
+      y: event.clientY,
+      word: wordAtPoint.word,
+      range: wordAtPoint.range,
+      suggestions,
+    });
+  }, [closeSpellMenu]);
 
   const insertImage = React.useCallback((src: string) => {
     const el = bodyRef.current;
@@ -171,14 +223,45 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
           ref={bodyRef}
           className="ep-input rich-editor"
           contentEditable
+          spellCheck
           data-placeholder={isAdmin ? "Write your document here..." : "Write your contribution here..."}
           onInput={syncBody}
+          onContextMenu={handleContextMenu}
           onPaste={handlePaste}
           onFocus={() => onFocus("body")}
           onBlur={onBlur}
           suppressContentEditableWarning
           style={{ "--focus-color": writer.color } as React.CSSProperties}
         />
+        {spellMenu && (
+          <div
+            className="spell-menu"
+            style={{ left: spellMenu.x, top: spellMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="spell-menu-title">Spelling</div>
+            {spellMenu.suggestions.map((suggestion) => (
+              <button
+                className="spell-menu-item"
+                key={suggestion}
+                type="button"
+                onClick={() => replaceRange(spellMenu.range, suggestion)}
+              >
+                {suggestion}
+              </button>
+            ))}
+            <button
+              className="spell-menu-item muted"
+              type="button"
+              onClick={() => {
+                addToCustomDictionary(spellMenu.word);
+                closeSpellMenu();
+              }}
+            >
+              Add to dictionary
+            </button>
+          </div>
+        )}
       </div>
 
       <button

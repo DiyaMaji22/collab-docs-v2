@@ -71,6 +71,14 @@ export interface DocumentMetadata {
   creatorName: string;
   createdAt: string;
   admins: string[]; // List of session IDs that have admin access
+  adminMembers?: AdminMember[];
+}
+
+export interface AdminMember {
+  sessionId: string;
+  name: string;
+  joinedAt: string;
+  isCreator?: boolean;
 }
 
 // ─── Document state ───────────────────────────────────────────────────────────
