@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 build/
+coverage/
 
 # Local development
 *.log
@@ -11,6 +12,7 @@ build/
 .env
 .env.*
 !.env.example
+*.zip
 
 # Editor and OS files
 .vscode/
@@ -21,3 +23,5 @@ Thumbs.db
 # TypeScript and Vite cache
 *.tsbuildinfo
 .vite/
+.turbo/
+.cache/
