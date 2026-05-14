@@ -8,11 +8,12 @@ import type {
   DocumentMetadata,
 } from "../types";
 import type { DocumentId } from "../utils/documentSession";
+import { getCurrentAccessToken } from "../utils/documentSession";
 import { createActivityEntry, appendToLog } from "../utils/activityLog";
-import { countWords } from "../utils/text";
-import { ADMIN_WRITER, buildWriterForUser, getDocumentMetadata, grantAdminAccess, isUserAdmin, normalizeDocumentMetadata, saveDocumentMetadata } from "../utils/session";
-import { loadDocumentRecord, saveDocumentRecord } from "../utils/api";
-import type { SessionUser } from "../types";
+import { countWords, sanitizeDocumentBody } from "../utils/text";
+import { ADMIN_WRITER, buildWriterForUser, getDocumentMetadata, getPermissionForAccessToken, grantAdminAccess, isUserAdmin, normalizeDocumentMetadata, saveDocumentMetadata } from "../utils/session";
+import { documentEventsUrl, loadDocumentRecord, removePresence, saveDocumentRecord, savePresence } from "../utils/api";
+import type { Permission, SessionUser } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,14 @@ function buildEmptyState(): DocumentState {
     viewers: [],
     activityLog: [],
   };
+}
+
+function compactProposals(proposals: ChangeProposal[]): ChangeProposal[] {
+  const pending = proposals.filter((proposal) => proposal.status === "pending");
+  const reviewed = proposals
+    .filter((proposal) => proposal.status !== "pending")
+    .slice(0, 50);
+  return [...pending, ...reviewed];
 }
 
 function loadState(docId: DocumentId): DocumentState {
@@ -69,6 +78,7 @@ type Action =
   | { type: "ACCEPT_PROPOSAL"; proposalId: string }
   | { type: "REJECT_PROPOSAL"; proposalId: string; note?: string }
   | { type: "UPSERT_VIEWER"; viewer: ViewerPresence }
+  | { type: "SET_VIEWERS"; viewers: ViewerPresence[] }
   | { type: "REMOVE_VIEWER"; sessionId: string };
 
 function reducer(state: DocumentState, action: Action): DocumentState {
@@ -154,7 +164,7 @@ function reducer(state: DocumentState, action: Action): DocumentState {
         ...state,
         document: { ...proposal.draft },
         drafts: { ...state.drafts, [proposal.writer.id]: { ...proposal.draft } },
-        proposals: state.proposals.map((p) => p.id === action.proposalId ? accepted : p),
+        proposals: compactProposals(state.proposals.map((p) => p.id === action.proposalId ? accepted : p)),
         activityLog: appendToLog(state.activityLog, entry),
       };
     }
@@ -166,7 +176,7 @@ function reducer(state: DocumentState, action: Action): DocumentState {
       const entry = createActivityEntry(ADMIN_WRITER, `rejected ${proposal.writer.name}'s changes`, action.note ?? "");
       return {
         ...state,
-        proposals: state.proposals.map((p) => p.id === action.proposalId ? rejected : p),
+        proposals: compactProposals(state.proposals.map((p) => p.id === action.proposalId ? rejected : p)),
         activityLog: appendToLog(state.activityLog, entry),
       };
     }
@@ -178,6 +188,9 @@ function reducer(state: DocumentState, action: Action): DocumentState {
         : [...state.viewers, action.viewer];
       return { ...state, viewers };
     }
+
+    case "SET_VIEWERS":
+      return { ...state, viewers: action.viewers };
 
     case "REMOVE_VIEWER":
       return { ...state, viewers: state.viewers.filter((v) => v.sessionId !== action.sessionId) };
@@ -194,6 +207,10 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [backendReady, setBackendReady] = useState(false);
   const [metadata, setMetadata] = useState<DocumentMetadata | null>(() => getDocumentMetadata(documentId));
+  const accessToken = useMemo(() => getCurrentAccessToken(), []);
+  const [verifiedPermission, setVerifiedPermission] = useState<Permission | null>(() =>
+    getPermissionForAccessToken(getDocumentMetadata(documentId), accessToken)
+  );
 
   // Check if user is admin based on metadata
   const isAdminByMetadata = useMemo(() => {
@@ -201,15 +218,23 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
       ? metadata.admins.includes(currentUser.sessionId)
       : isUserAdmin(documentId, currentUser.sessionId);
   }, [documentId, metadata, currentUser.sessionId]);
-  const isAdmin = isAdminByMetadata || currentUser.permission === "admin";
-  const canEdit = currentUser.permission === "edit" || isAdmin;
+  const effectivePermission = verifiedPermission ?? (isAdminByMetadata ? "admin" : currentUser.permission);
+  const isAdmin = isAdminByMetadata || verifiedPermission === "admin";
+  const canEdit = effectivePermission === "edit" || isAdmin;
+  const realtimeToken = useMemo(() => {
+    if (accessToken) return accessToken;
+    if (!metadata?.shareTokens) return null;
+    if (isAdmin) return metadata.shareTokens.admin;
+    if (canEdit) return metadata.shareTokens.edit;
+    return metadata.shareTokens.view;
+  }, [accessToken, canEdit, isAdmin, metadata]);
   const writer = useMemo(() => buildWriterForUser(currentUser), [currentUser]);
 
   useEffect(() => {
     let cancelled = false;
     setBackendReady(false);
 
-    loadDocumentRecord(documentId)
+    loadDocumentRecord(documentId, accessToken)
       .then((record) => {
         if (cancelled) return;
         if (record?.state) {
@@ -219,6 +244,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
           const normalized = normalizeDocumentMetadata(record.metadata);
           saveDocumentMetadata(normalized);
           setMetadata(normalized);
+          setVerifiedPermission(record.accessRole ?? getPermissionForAccessToken(normalized, accessToken));
         }
       })
       .catch((error) => {
@@ -233,7 +259,34 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     return () => {
       cancelled = true;
     };
-  }, [documentId]);
+  }, [accessToken, documentId]);
+
+  useEffect(() => {
+    if (!realtimeToken) return;
+    const events = new EventSource(documentEventsUrl(documentId, realtimeToken));
+    events.addEventListener("document", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.state) dispatch({ type: "SYNC_FROM_STORAGE", payload: data.state });
+        if (data.metadata) {
+          const normalized = normalizeDocumentMetadata(data.metadata);
+          saveDocumentMetadata(normalized);
+          setMetadata(normalized);
+        }
+        if (data.accessRole) setVerifiedPermission(data.accessRole);
+      } catch (error) {
+        console.warn("Realtime document event could not be read.", error);
+      }
+    });
+    events.addEventListener("presence", (event) => {
+      try {
+        dispatch({ type: "SET_VIEWERS", viewers: JSON.parse((event as MessageEvent).data) });
+      } catch (error) {
+        console.warn("Realtime presence event could not be read.", error);
+      }
+    });
+    return () => events.close();
+  }, [documentId, realtimeToken]);
 
   // Persist to localStorage (skip viewers — ephemeral)
   useEffect(() => {
@@ -246,21 +299,22 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   }, [documentId, state]);
 
   useEffect(() => {
-    if (!backendReady) return;
+    if (!backendReady || !isAdmin) return;
 
     const timeout = setTimeout(() => {
       const { viewers: _v, ...persistable } = state;
       saveDocumentRecord(
         documentId,
         { ...persistable, viewers: [] },
-        metadata ?? getDocumentMetadata(documentId)
+        metadata ?? getDocumentMetadata(documentId),
+        accessToken
       ).catch((error) => {
         console.warn("MongoDB document save failed; kept browser cache.", error);
       });
     }, 500);
 
     return () => clearTimeout(timeout);
-  }, [backendReady, documentId, metadata, state]);
+  }, [accessToken, backendReady, documentId, isAdmin, metadata, state]);
 
   // Cross-tab sync via storage events
   useEffect(() => {
@@ -276,25 +330,27 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     return () => window.removeEventListener("storage", handler);
   }, [documentId]);
 
-  // Register viewer presence (ping every 30s, remove on unmount)
+  // Register realtime presence (heartbeat every 15s, remove on unmount)
   useEffect(() => {
-    if (!canEdit && !isAdmin) {
-      const viewer: ViewerPresence = {
-        sessionId: currentUser.sessionId,
-        joinedAt: currentUser.joinedAt,
-        lastSeen: new Date().toISOString(),
-        name: currentUser.name,
-      };
-      dispatch({ type: "UPSERT_VIEWER", viewer });
-      const interval = setInterval(() => {
-        dispatch({ type: "UPSERT_VIEWER", viewer: { ...viewer, lastSeen: new Date().toISOString() } });
-      }, 30_000);
-      return () => {
-        clearInterval(interval);
-        dispatch({ type: "REMOVE_VIEWER", sessionId: currentUser.sessionId });
-      };
-    }
-  }, [currentUser, canEdit, isAdmin]);
+    const viewer: ViewerPresence = {
+      sessionId: currentUser.sessionId,
+      joinedAt: currentUser.joinedAt,
+      lastSeen: new Date().toISOString(),
+      name: currentUser.name,
+    };
+    dispatch({ type: "UPSERT_VIEWER", viewer });
+    savePresence(documentId, viewer, accessToken).catch(() => undefined);
+    const interval = setInterval(() => {
+      const nextViewer = { ...viewer, lastSeen: new Date().toISOString() };
+      dispatch({ type: "UPSERT_VIEWER", viewer: nextViewer });
+      savePresence(documentId, nextViewer, accessToken).catch(() => undefined);
+    }, 15_000);
+    return () => {
+      clearInterval(interval);
+      dispatch({ type: "REMOVE_VIEWER", sessionId: currentUser.sessionId });
+      removePresence(documentId, currentUser.sessionId, accessToken).catch(() => undefined);
+    };
+  }, [accessToken, currentUser, documentId]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
@@ -305,7 +361,12 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
 
   const updateDraft = useCallback((field: "title" | "body", value: string) => {
     if (!canEdit) return;
-    dispatch({ type: "UPDATE_DRAFT", writerId: currentUser.sessionId, field, value });
+    dispatch({
+      type: "UPDATE_DRAFT",
+      writerId: currentUser.sessionId,
+      field,
+      value: field === "body" ? sanitizeDocumentBody(value) : value,
+    });
     dispatch({ type: "SET_PRESENCE", writerId: currentUser.sessionId, patch: { isTyping: true, activity: field === "title" ? "Editing title" : "Typing..." } });
 
     clearTimeout(typingTimers.current[currentUser.sessionId]);
@@ -339,7 +400,8 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
           viewers: [],
           activityLog: appendToLog(state.activityLog, entry),
         },
-        getDocumentMetadata(documentId)
+        getDocumentMetadata(documentId),
+        accessToken
       ).catch((error) => {
         console.warn("MongoDB document save failed; kept browser cache.", error);
       });
@@ -355,7 +417,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
       });
       dispatch({ type: "SET_PRESENCE", writerId: currentUser.sessionId, patch: { isTyping: false, activity: "Submitted for review" } });
     }
-  }, [documentId, state, currentUser.sessionId, isAdmin, canEdit, writer]);
+  }, [accessToken, documentId, state, currentUser.sessionId, isAdmin, canEdit, writer]);
 
   const acceptProposal = useCallback((proposalId: string) => {
     if (!isAdmin) return;
@@ -370,10 +432,10 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (currentUser.permission !== "admin") return;
+    if (!isAdmin) return;
     const nextMetadata = grantAdminAccess(documentId, currentUser.sessionId, currentUser.name);
     if (nextMetadata) setMetadata(nextMetadata);
-  }, [documentId, metadata, currentUser.permission, currentUser.sessionId, currentUser.name]);
+  }, [documentId, metadata, isAdmin, currentUser.sessionId, currentUser.name]);
 
   const currentDraft = state.drafts[currentUser.sessionId] ?? { ...state.document };
   const resolvedTitle = state.document.title.trim();
@@ -392,6 +454,7 @@ export function useCollaborativeDocument(documentId: DocumentId, currentUser: Se
     resolvedTitle,
     wordStats,
     writer,
+    effectivePermission,
     isAdmin,
     canEdit,
     pendingProposals,

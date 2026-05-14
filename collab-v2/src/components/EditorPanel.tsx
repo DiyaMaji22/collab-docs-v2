@@ -1,7 +1,12 @@
 import React from "react";
-import { Toolbar } from "./Toolbar";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import ImageExtension from "@tiptap/extension-image";
+import TextAlign from "@tiptap/extension-text-align";
+import Highlight from "@tiptap/extension-highlight";
+import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
 import type { Writer, WriterDraft, WriterPresence } from "../types";
-import { formatBodyText } from "../utils/text";
 import { addToCustomDictionary, getSpellingSuggestions, getWordAtPoint } from "../utils/spellcheck";
 
 interface EditorPanelProps {
@@ -69,23 +74,35 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
   onFocus,
   onBlur,
 }) => {
-  const bodyId = `editor-body-${writer.id}`;
-  const bodyRef = React.useRef<HTMLDivElement | null>(null);
   const [spellMenu, setSpellMenu] = React.useState<SpellMenuState>(null);
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      ImageExtension,
+      TextStyle,
+      Color,
+      Highlight.configure({ multicolor: true }),
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+    ],
+    content: draft.body,
+    editorProps: {
+      attributes: {
+        class: "ep-input rich-editor",
+        "data-placeholder": isAdmin ? "Write your document here..." : "Write your contribution here...",
+        spellcheck: "true",
+      },
+    },
+    onUpdate: ({ editor: activeEditor }) => {
+      onUpdate("body", activeEditor.getHTML());
+    },
+    onFocus: () => onFocus("body"),
+    onBlur,
+  });
 
   React.useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || document.activeElement === el) return;
-    const nextHtml = formatBodyText(draft.body);
-    if (el.innerHTML !== nextHtml) {
-      el.innerHTML = nextHtml;
-    }
-  }, [draft.body]);
-
-  const syncBody = React.useCallback(() => {
-    const el = bodyRef.current;
-    if (el) onUpdate("body", el.innerHTML);
-  }, [onUpdate]);
+    if (!editor || editor.isFocused || editor.getHTML() === draft.body) return;
+    editor.commands.setContent(draft.body, { emitUpdate: false });
+  }, [draft.body, editor]);
 
   const closeSpellMenu = React.useCallback(() => setSpellMenu(null), []);
 
@@ -102,9 +119,9 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
   const replaceRange = React.useCallback((range: Range, value: string) => {
     range.deleteContents();
     range.insertNode(document.createTextNode(value));
-    syncBody();
+    if (editor) onUpdate("body", editor.getHTML());
     closeSpellMenu();
-  }, [closeSpellMenu, syncBody]);
+  }, [closeSpellMenu, editor, onUpdate]);
 
   const handleContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const wordAtPoint = getWordAtPoint(event.clientX, event.clientY);
@@ -130,31 +147,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
   }, [closeSpellMenu]);
 
   const insertImage = React.useCallback((src: string) => {
-    const el = bodyRef.current;
-    if (!el) return;
-
-    el.focus();
-    const img = document.createElement("img");
-    img.className = "doc-image";
-    img.src = src;
-    img.alt = "Pasted image";
-
-    const selection = window.getSelection();
-    if (selection && selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(img);
-      range.setStartAfter(img);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    } else {
-      el.appendChild(img);
-    }
-
-    el.appendChild(document.createElement("br"));
-    syncBody();
-  }, [syncBody]);
+    editor?.chain().focus().setImage({ src, alt: "Pasted image" }).run();
+  }, [editor]);
 
   const handlePaste = React.useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find((item) =>
@@ -213,26 +207,25 @@ export const EditorPanel: React.FC<EditorPanelProps> = React.memo(({
       </div>
 
       <div className="ep-field">
-        <Toolbar
-          targetId={bodyId}
-          onTextChange={(val) => onUpdate("body", val)}
-        />
+        <div className="toolbar docs-toolbar">
+          <button className="tb-btn strong" type="button" onClick={() => editor?.chain().focus().toggleBold().run()}>B</button>
+          <button className="tb-btn italic" type="button" onClick={() => editor?.chain().focus().toggleItalic().run()}>I</button>
+          <button className="tb-btn underline" type="button" onClick={() => editor?.chain().focus().toggleStrike().run()}>S</button>
+          <span className="tb-separator" />
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}>H1</button>
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().toggleBulletList().run()}>List</button>
+          <span className="tb-separator" />
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().setTextAlign("left").run()}>Left</button>
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().setTextAlign("center").run()}>Center</button>
+          <button className="tb-btn" type="button" onClick={() => editor?.chain().focus().setTextAlign("right").run()}>Right</button>
+          <input className="tb-color" type="color" title="Text color" onChange={(event) => editor?.chain().focus().setColor(event.target.value).run()} />
+          <button className="tb-chip" type="button" onClick={() => editor?.chain().focus().toggleHighlight({ color: "#fef08a" }).run()}>Mark</button>
+        </div>
         <div className="ep-label">Body</div>
-        <div
-          id={bodyId}
-          ref={bodyRef}
-          className="ep-input rich-editor"
-          contentEditable
-          spellCheck
-          data-placeholder={isAdmin ? "Write your document here..." : "Write your contribution here..."}
-          onInput={syncBody}
-          onContextMenu={handleContextMenu}
-          onPaste={handlePaste}
-          onFocus={() => onFocus("body")}
-          onBlur={onBlur}
-          suppressContentEditableWarning
-          style={{ "--focus-color": writer.color } as React.CSSProperties}
-        />
+        <div onContextMenu={handleContextMenu} onPaste={handlePaste} style={{ "--focus-color": writer.color } as React.CSSProperties}>
+          <EditorContent editor={editor} />
+        </div>
         {spellMenu && (
           <div
             className="spell-menu"

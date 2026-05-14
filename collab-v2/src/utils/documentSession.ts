@@ -2,6 +2,7 @@ export type DocumentId = string;
 
 const DOCUMENT_QUERY_KEY = "doc";
 const ROLE_QUERY_KEY = "role";
+const ACCESS_QUERY_KEY = "access";
 
 function createDocumentId(): DocumentId {
   return crypto.randomUUID
@@ -25,6 +26,10 @@ export function hasSharedDocumentLink(): boolean {
   const role = url.searchParams.get(ROLE_QUERY_KEY);
   return (
     Boolean(url.searchParams.get(DOCUMENT_QUERY_KEY)) &&
-    (role === "view" || role === "edit" || role === "admin")
+    (Boolean(url.searchParams.get(ACCESS_QUERY_KEY)) || role === "view" || role === "edit" || role === "admin")
   );
+}
+
+export function getCurrentAccessToken(): string | null {
+  return new URL(window.location.href).searchParams.get(ACCESS_QUERY_KEY);
 }

@@ -1,9 +1,11 @@
 /* ─── Landing Page ──────────────────────────────────────────────────────────── */
 
 .landing-container {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(320px, 450px) minmax(320px, 520px);
   align-items: center;
   justify-content: center;
+  gap: 1rem;
   min-height: 100vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 1rem;
@@ -134,8 +136,78 @@
   line-height: 1.5;
 }
 
+.dashboard-panel {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+  padding: 1.25rem;
+  width: 100%;
+  max-height: 560px;
+  overflow: hidden;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.dashboard-header h2 {
+  color: #1f2937;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.dashboard-header span {
+  color: #4f46e5;
+  font-size: .8rem;
+  font-weight: 800;
+}
+
+.document-list {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.document-row {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  padding: .75rem;
+  text-align: left;
+}
+
+.document-row:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.document-row-title {
+  color: #111827;
+  font-size: .95rem;
+  font-weight: 700;
+}
+
+.document-row-meta,
+.dashboard-empty {
+  color: #6b7280;
+  font-size: .8rem;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
+  .landing-container {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
   .landing-card {
     padding: 2rem;
   }

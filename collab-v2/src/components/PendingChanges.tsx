@@ -15,6 +15,14 @@ export const PendingChanges: React.FC<PendingChangesProps> = React.memo(({
 }) => {
   const [rejectNote, setRejectNote] = React.useState<Record<string, string>>({});
   const [rejectOpen, setRejectOpen] = React.useState<string | null>(null);
+  const [page, setPage] = React.useState(0);
+  const pageSize = 5;
+  const pageCount = Math.max(1, Math.ceil(proposals.length / pageSize));
+  const visibleProposals = proposals.slice(page * pageSize, page * pageSize + pageSize);
+
+  React.useEffect(() => {
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
 
   const handleReject = (id: string) => {
     onReject(id, rejectNote[id] ?? "");
@@ -36,7 +44,7 @@ export const PendingChanges: React.FC<PendingChangesProps> = React.memo(({
             No changes waiting for review.
           </span>
         ) : (
-          proposals.map((proposal) => (
+          visibleProposals.map((proposal) => (
             <div className="review-item" key={proposal.id}>
               <div className="review-header">
                 <span
@@ -99,6 +107,17 @@ export const PendingChanges: React.FC<PendingChangesProps> = React.memo(({
           ))
         )}
       </div>
+      {proposals.length > pageSize && (
+        <div className="proposal-pager">
+          <button className="pager-btn" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
+            Previous
+          </button>
+          <span>{page + 1} / {pageCount}</span>
+          <button className="pager-btn" type="button" disabled={page === pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 });

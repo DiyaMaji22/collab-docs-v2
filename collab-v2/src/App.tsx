@@ -10,7 +10,8 @@ import { ShareModal } from "./components/ShareModal";
 import { LandingPage } from "./components/LandingPage";
 import { useCollaborativeDocument } from "./hooks/useCollaborativeDocument";
 import { getCurrentDocumentId, hasSharedDocumentLink } from "./utils/documentSession";
-import { resolveCurrentUser, buildShareLinks, getDocumentMetadata, createDocumentMetadata, saveDocumentMetadata, getOrCreateSessionId } from "./utils/session";
+import { resolveCurrentUser, buildShareLinks, getDocumentMetadata, createDocumentMetadata, saveDocumentMetadata, getOrCreateSessionId, getLocalDocumentSummaries } from "./utils/session";
+import { listDocumentRecords, type DocumentSummary } from "./utils/api";
 
 const App: React.FC = () => {
   const [openedFromSharedLink] = React.useState(() => hasSharedDocumentLink());
@@ -20,6 +21,7 @@ const App: React.FC = () => {
   });
   const [currentUser, setCurrentUser] = React.useState(() => resolveCurrentUser(documentId));
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [documents, setDocuments] = React.useState<DocumentSummary[]>(() => getLocalDocumentSummaries());
 
   const shareLinks = React.useMemo(() => buildShareLinks(documentId), [documentId]);
 
@@ -29,6 +31,7 @@ const App: React.FC = () => {
     resolvedTitle,
     wordStats,
     writer,
+    effectivePermission,
     isAdmin,
     canEdit,
     pendingProposals,
@@ -59,16 +62,49 @@ const App: React.FC = () => {
     sessionStorage.setItem("collab-session-v2", JSON.stringify(updatedUser));
     setCurrentUser(updatedUser);
     setDocumentExists(true);
+    setDocuments(getLocalDocumentSummaries());
+  };
+
+  React.useEffect(() => {
+    listDocumentRecords().then((remoteDocuments) => {
+      const byId = new Map([...getLocalDocumentSummaries(), ...remoteDocuments].map((doc) => [doc.documentId, doc]));
+      setDocuments([...byId.values()]);
+    });
+  }, []);
+
+  const handleOpenDocument = (nextDocumentId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("doc", nextDocumentId);
+    window.location.href = url.toString();
+  };
+
+  const handleSetDisplayName = (name: string) => {
+    const updatedUser = { ...currentUser, name };
+    sessionStorage.setItem("collab-session-v2", JSON.stringify(updatedUser));
+    setCurrentUser(updatedUser);
   };
 
   if (!documentExists) {
-    return <LandingPage onCreateDocument={handleCreateDocument} />;
+    return (
+      <LandingPage
+        onCreateDocument={handleCreateDocument}
+        documents={documents}
+        onOpenDocument={handleOpenDocument}
+      />
+    );
   }
+
+  const displayUser = {
+    ...currentUser,
+    permission: isAdmin ? "admin" as const : effectivePermission,
+    isAnonymous: isAdmin ? false : currentUser.isAnonymous,
+  };
 
   return (
     <>
       <Topbar
-        currentUser={currentUser}
+        currentUser={displayUser}
+        documentId={documentId}
         resolvedTitle={resolvedTitle}
         viewerCount={viewerCount}
         pendingCount={pendingProposals.length}
@@ -76,6 +112,23 @@ const App: React.FC = () => {
       />
 
       {!canEdit && !isAdmin && <ViewerBanner />}
+      {canEdit && !isAdmin && /^Contributor\s+\d+$/.test(currentUser.name) && (
+        <div className="modal-backdrop">
+          <form
+            className="name-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const input = form.elements.namedItem("displayName") as HTMLInputElement;
+              if (input.value.trim()) handleSetDisplayName(input.value.trim());
+            }}
+          >
+            <h2 className="modal-title">Choose display name</h2>
+            <input className="form-input" name="displayName" placeholder="Your name" autoFocus />
+            <button className="landing-button" type="submit">Continue editing</button>
+          </form>
+        </div>
+      )}
 
       <div className={`workspace${!canEdit && !isAdmin ? " viewer-mode" : ""}`}>
         {/* Left: editor or view-only placeholder */}

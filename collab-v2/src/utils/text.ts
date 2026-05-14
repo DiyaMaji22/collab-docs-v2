@@ -168,6 +168,10 @@ function sanitizeRichHtml(html: string): string {
   return wrapper.innerHTML;
 }
 
+export function sanitizeDocumentBody(html: string): string {
+  return sanitizeRichHtml(html);
+}
+
 export function formatBodyText(text: string): string {
   if (hasHtml(text)) {
     return sanitizeRichHtml(text);

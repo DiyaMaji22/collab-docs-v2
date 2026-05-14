@@ -3,6 +3,7 @@ import type { SessionUser } from "../types";
 
 interface TopbarProps {
   currentUser: SessionUser;
+  documentId: string;
   resolvedTitle: string;
   viewerCount: number;
   pendingCount: number;
@@ -12,19 +13,22 @@ interface TopbarProps {
 const MENUS = ["File", "Edit", "View", "Insert", "Format", "Tools", "Help"];
 
 const PERMISSION_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Admin Editor",
   edit: "Editor",
   view: "Viewer",
+  comment: "Commenter",
 };
 
 const PERMISSION_COLORS: Record<string, string> = {
   admin: "#2563eb",
   edit: "#0f766e",
   view: "#64748b",
+  comment: "#b45309",
 };
 
 export const Topbar: React.FC<TopbarProps> = ({
   currentUser,
+  documentId,
   resolvedTitle,
   viewerCount,
   pendingCount,
@@ -76,6 +80,14 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         <div className="header-actions">
           <span className="menu-status">{menuStatus}</span>
+          <button
+            className="doc-id-pill"
+            type="button"
+            title={documentId}
+            onClick={() => navigator.clipboard?.writeText(documentId)}
+          >
+            ID {documentId.slice(0, 8)}
+          </button>
 
           {/* Viewer count pill — always visible */}
           <div className="viewer-pill" title="People currently viewing">

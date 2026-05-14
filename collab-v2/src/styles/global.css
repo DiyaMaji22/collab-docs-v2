@@ -37,6 +37,8 @@ input,textarea,select{font-family:inherit}
 
 /* Viewer count pill */
 .viewer-pill{display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:99px;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;font-size:12px;font-weight:600}
+.doc-id-pill{border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted);font-size:12px;font-weight:700;padding:5px 10px}
+.doc-id-pill:hover{background:#f8fafc;color:var(--text)}
 .viewer-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0}
 .viewer-dot.pulse{animation:pulse-green 2s infinite}
 @keyframes pulse-green{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}70%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}
@@ -84,7 +86,11 @@ input,textarea,select{font-family:inherit}
 .ep-input:focus{border-color:var(--focus-color,var(--admin))}
 textarea.ep-input{resize:none;min-height:260px;line-height:1.55}
 .rich-editor{min-height:260px;line-height:1.55;overflow-y:auto;white-space:pre-wrap}
+.ProseMirror{min-height:244px;outline:none}
+.ProseMirror p{margin:0 0 8px}
+.ProseMirror ul,.ProseMirror ol{padding-left:20px;margin:0 0 8px}
 .rich-editor:empty::before{content:attr(data-placeholder);color:var(--subtle);font-style:italic}
+.ProseMirror:empty::before{content:attr(data-placeholder);color:var(--subtle);font-style:italic}
 .rich-editor strong,.rich-editor b{font-weight:700}
 .rich-editor em,.rich-editor i{font-style:italic}
 .rich-editor u{text-decoration:underline}
@@ -202,6 +208,10 @@ textarea.ep-input{resize:none;min-height:260px;line-height:1.55}
 .reject-form{display:flex;flex-direction:column;gap:6px}
 .reject-input{border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px;outline:none}
 .reject-input:focus{border-color:#dc2626}
+.proposal-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;font-size:11px;color:var(--muted)}
+.pager-btn{border:1px solid var(--border);background:#fff;border-radius:6px;color:var(--text);font-size:11px;font-weight:700;padding:5px 9px}
+.pager-btn:disabled{opacity:.45;cursor:not-allowed}
+.name-modal{background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:12px;padding:22px;width:min(360px,92vw)}
 
 /* ─── Share modal ────────────────────────────────────────────────────────── */
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;animation:fadeIn .18s ease}
@@ -239,13 +249,22 @@ textarea.ep-input{resize:none;min-height:260px;line-height:1.55}
 
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media(max-width:1080px){
-  .workspace,.workspace.viewer-mode{grid-template-columns:1fr;height:auto;overflow:auto}
+  .workspace,.workspace.viewer-mode{grid-template-columns:1fr;height:auto;min-height:calc(100vh - 74px);overflow:auto}
   .editors-col{border-right:none;border-bottom:1px solid var(--border)}
   .activity-col{border-left:none;border-top:1px solid var(--border)}
+  .doc-col{order:2;padding:20px 0}
+  .editors-col{order:1}
+  .activity-col{order:3}
   .docs-title-row{flex-wrap:wrap}
   .header-actions{justify-content:flex-start;width:100%;flex-wrap:wrap}
 }
 @media(max-width:640px){
+  .topbar{padding:8px 10px}
+  .doc-title-input{max-width:190px}
+  .editor-panel{padding:10px}
+  .toolbar{overflow-x:auto;flex-wrap:nowrap}
+  .tb-btn,.tb-chip{flex:0 0 auto}
+  .rich-editor{min-height:220px}
   .paper{padding:32px 20px;min-height:400px}
   .modal-box{padding:18px}
 }

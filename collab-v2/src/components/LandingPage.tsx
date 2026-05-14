@@ -1,11 +1,14 @@
 import React, { useState } from "react";
+import type { DocumentSummary } from "../utils/api";
 import "../styles/landing.css";
 
 interface LandingPageProps {
   onCreateDocument: (creatorName: string, documentTitle: string) => void;
+  documents: DocumentSummary[];
+  onOpenDocument: (documentId: string) => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onCreateDocument }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onCreateDocument, documents, onOpenDocument }) => {
   const [creatorName, setCreatorName] = useState("");
   const [documentTitle, setDocumentTitle] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,6 +70,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onCreateDocument }) =>
           <p className="info-text">
             ✨ You will become the admin of this document and can invite others to collaborate.
           </p>
+        </div>
+      </div>
+      <div className="dashboard-panel">
+        <div className="dashboard-header">
+          <h2>Documents</h2>
+          <span>{documents.length}</span>
+        </div>
+        <div className="document-list">
+          {documents.length === 0 ? (
+            <p className="dashboard-empty">No documents yet.</p>
+          ) : (
+            documents.map((document) => (
+              <button className="document-row" type="button" key={document.documentId} onClick={() => onOpenDocument(document.documentId)}>
+                <span className="document-row-title">{document.title}</span>
+                <span className="document-row-meta">{document.creatorName} - {document.documentId.slice(0, 8)}</span>
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>

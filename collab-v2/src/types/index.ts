@@ -72,6 +72,7 @@ export interface DocumentMetadata {
   createdAt: string;
   admins: string[]; // List of session IDs that have admin access
   adminMembers?: AdminMember[];
+  shareTokens?: ShareTokens;
 }
 
 export interface AdminMember {
@@ -80,6 +81,8 @@ export interface AdminMember {
   joinedAt: string;
   isCreator?: boolean;
 }
+
+export type ShareTokens = Record<"view" | "edit" | "admin", string>;
 
 // ─── Document state ───────────────────────────────────────────────────────────
 
